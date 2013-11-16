@@ -1,0 +1,209 @@
+new;
+cls;
+format 9,4;
+
+n=586;
+t=19;
+load data[n*t,4]=Illinois_Data.csv;
+x=data[.,2];
+y=data[.,1];
+k=cols(x);
+
+// 1) two-way error, fixed effects
+qx=x;
+qy=y;
+for i (1,n,1);
+qx[(((i-1)*t)+1):(i*t),.]=(eye(t)-(1/t)*ones(t,t))*x[(((i-1)*t)+1):(i*t),.]-((ones(1,n).*.eye(t)/n)*x)+((1/(n*t))*ones(t,t).*.ones(1,n))*x;
+qy[(((i-1)*t)+1):(i*t),.]=(eye(t)-(1/t)*ones(t,t))*y[(((i-1)*t)+1):(i*t),.]-((ones(1,n).*.eye(t)/n)*y)+((1/(n*t))*ones(t,t).*.ones(1,n))*y;
+endfor;
+beta_lsdv=invpd(qx'qx)*qx'qy;
+RSS=(qy-qx*beta_lsdv)'(qy-qx*beta_lsdv);
+sigma_squared=RSS/(n*t-n-t-k+1);
+var=sigma_squared*invpd(qx'qx);
+st_err=sqrt(diag(var));
+
+//perform wald statistic
+d_mu=(eye(n-1).*.ones(t,1))|zeros(t,n-1);
+d_lambda=ones(n,1).*.(eye(t-1)|zeros(1,t-1));
+d=d_lambda~ones(n*t,1)~d_mu;
+coefs=inv(d'd)*d'(y-x*beta_lsdv);
+lambda_hat=coefs[1:9,.];
+
+x_full=d~x;
+Qxx_=invpd(x_full'x_full);
+coefs_full=coefs|beta_lsdv;
+e_hat=y-x_full*coefs_full;
+Qxxe2=(x_full.*e_hat)'(x_full.*e_hat);
+V_hat=Qxx_*Qxxe2*Qxx_;
+V_hat=V_hat[1:9,1:9];
+W_stat=lambda_hat'inv(eye(t-1)*V_hat*eye(t-1))*lambda_hat;
+
+print "1) two-way error, fixed effects";
+
+print "    beta: " beta_lsdv';
+print "st. err.: " st_err';
+print "W-stat.: " W_stat;
+print "cdfchii(0.95,9): " cdfchii(0.95,t-1);
+print "H0: no time effects - is rejected";
+
+// end 1)
+
+out=out_nes(beta_lsdv'~st_err');
+
+// 2) one-way error, random effects
+x_1=ones(n*t,1)~x;
+x_ols=x_1;
+y_1=y;
+beta_ols=invpd(x_1'x_1)*x_1'y; //OLS
+qx=x;
+qy=y;
+
+for i (1,n,1);
+qx[(((i-1)*t)+1):(i*t),.]=(eye(t)-(1/t)*ones(t,t))*qx[(((i-1)*t)+1):(i*t),.];
+qy[(((i-1)*t)+1):(i*t),.]=(eye(t)-(1/t)*ones(t,t))*qy[(((i-1)*t)+1):(i*t),.];
+endfor;
+beta_within=invpd(qx'qx)*qx'qy; //within
+
+for i (1,n,1);
+x_1[(((i-1)*t)+1):(i*t),.]=(1/t)*ones(t,t)*x_1[(((i-1)*t)+1):(i*t),.];
+y_1[(((i-1)*t)+1):(i*t),.]=(1/t)*ones(t,t)*y_1[(((i-1)*t)+1):(i*t),.];
+endfor;
+beta_between=invpd(x_1'x_1)*x_1'y_1; //between
+
+RSS_w=(qy-y'qx*beta_within)'(qy-qx*beta_within);
+
+sigma_2_v=RSS_w/(n*t-n-k+1);
+sigma2v_Tsigma2m=(y_1-x_1*beta_between)'(y_1-x_1*beta_between)/(n-k);
+theta=sigma_2_v/sigma2v_Tsigma2m;
+
+x_gls=ones(n*t,1)~x;
+y_gls=y;
+for i (1,n,1);
+x_gls[(((i-1)*t)+1):(i*t),.]=(eye(t)-(1-sqrt(theta))*(1/t)*ones(t,t))*x_gls[(((i-1)*t)+1):(i*t),.];
+y_gls[(((i-1)*t)+1):(i*t),.]=(eye(t)-(1-sqrt(theta))*(1/t)*ones(t,t))*y_gls[(((i-1)*t)+1):(i*t),.];
+endfor;
+beta_gls=invpd(x_gls'x_gls)*x_gls'y_gls;//feasible GLS
+
+omega=sigma_2_v*(eye(n*t)-eye(n).*.((1/t)*ones(t,t)))+sigma2v_Tsigma2m*(eye(n).*.((1/t)*ones(t,t)));
+
+var_ols=invpd(x_ols'x_ols)*x_ols'omega*x_ols*invpd(x_ols'x_ols);
+var_within=sigma_2_v*invpd(qx'qx);
+var_between=sigma2v_Tsigma2m*invpd(x_1'x_1);
+var_gls=invpd(x_ols'invpd(omega)*x_ols);
+
+H_stat=(beta_within-beta_gls[2:rows(beta_gls)])'invpd(var_within-var_gls[2:rows(var_gls),2:cols(var_gls)])*(beta_within-beta_gls[2:rows(beta_gls)]);
+
+print "2) one-way error, random effects";
+
+print "OLS";
+print "    beta: " beta_ols';
+print "st. err.: " sqrt(diag(var_ols)');
+
+print "Within";
+print "    beta: " beta_within';
+print "st. err.: " sqrt(diag(var_within)');
+
+print "Between";
+print "    beta: " beta_between';
+print "st. err.: " sqrt(diag(var_between)');
+
+print "GLS";
+print "    beta: " beta_gls';
+print "st. err.: " sqrt(diag(var_gls)');
+
+print "Hausman stat.: " H_stat;
+print "cdfchii(0.95,5): " cdfchii(0.95,k);
+print "we do not accept the random effects hypothesis";
+
+// end 2)
+
+out=out_nes(beta_ols'~sqrt(diag(var_ols)'));
+out=out_nes(beta_within'~sqrt(diag(var_within)'));
+out=out_nes(beta_between'~sqrt(diag(var_between)'));
+out=out_nes(beta_gls'~sqrt(diag(var_gls)'));
+
+// 3) FD-GMM
+//form FD matrices
+dy=zeros(n*(t-2),1);
+dy_1=zeros(n*(t-2),1);
+dx=zeros(n*(t-2),k);
+for i (1,n,1);
+dy[(((i-1)*(t-2))+1):(i*(t-2)),.]=y[(((i-1)*t)+3):(i*t),.]-y[(((i-1)*t)+2):((i*t)-1),.];
+dy_1[(((i-1)*(t-2))+1):(i*(t-2)),.]=y[(((i-1)*t)+2):((i*t)-1),.]-y[(((i-1)*t)+1):((i*t)-2),.];
+dx[(((i-1)*(t-2))+1):(i*(t-2)),.]=x[(((i-1)*t)+3):(i*t),.]-x[(((i-1)*t)+2):((i*t)-1),.];
+endfor;
+
+//form G
+g=2*eye(t-2);
+g[1,2]=-1;
+g[t-2,t-3]=-1;
+for i (2,t-3,1);
+g[i,i-1]=-1;
+g[i,i+1]=-1;
+endfor;
+
+//form W
+w=zeros(n*(t-2), 0.5*(t-2)*((t-1)+k*(t+1)));
+
+for i (1,n,1);
+w1=w[(((i-1)*(t-2))+1):(i*(t-2)),.];
+tabul=0;
+
+  for h (1,t-2,1);
+  str=zeros(1,cols(w));
+  z=h+2;
+  y_count=z-2;
+  x_count=z-1;
+  ys=y[(((i-1)*t)+1):(((i-1)*t)+y_count),.];
+  y_temp=ys;
+  j=rows(ys); 
+    for l (1,rows(ys),1);
+    ys[l,.]=y_temp[j,.];
+    j=j-1;
+    endfor;
+  ys=ys';
+  xs=x[(((i-1)*t)+1):(((i-1)*t)+x_count),.];
+
+  x_temp=zeros(1,k*rows(xs));
+    for l (1,rows(xs),1);
+    x_temp[1,((l-1)*k+1):(l*k)]=xs[rows(xs)-l+1,.];
+    endfor;
+  xs=x_temp;
+  
+  if (tabul==0);
+  str=ys~xs~zeros(1,cols(w)-cols(ys~xs));
+  elseif ((cols(w)-tabul)==cols(ys~xs));
+  str=zeros(1,tabul)~ys~xs;
+  else;
+  str=zeros(1,tabul)~ys~xs~zeros(1,cols(w)-tabul-cols(ys~xs));
+  endif;
+  
+  tabul=tabul+cols(ys~xs);
+  w1[h,.]=str;
+  endfor;
+
+w[(((i-1)*(t-2))+1):(i*(t-2)),.]=w1;
+endfor;
+
+beta_fd=inv((dy_1~dx)'w*inv(w'(eye(n).*.G)*w)*w'(dy_1~dx))*((dy_1~dx)'w*inv(w'(eye(n).*.G)*w)*w'dy);
+sigma_2_v=(dy-(dy_1~dx)*beta_fd)'(dy-(dy_1~dx)*beta_fd)/(n*(t-2))/2;
+avar=sigma_2_v*inv((dy_1~dx)'w*inv(w'(eye(n).*.G)*w)*w'(dy_1~dx));
+
+print "3) FD-GMM";
+
+print "    beta: " beta_fd';
+print "st. err.: " sqrt(diag(avar)');
+print "t-stat.: " beta_fd[1]/sqrt(avar[1,1]);
+print "cdfni(0.025): " cdfni(0.025);
+print "delta is statistically significant";
+
+// end 3)
+
+out=out_nes(beta_fd'~sqrt(diag(avar)'));
+out=out_nes(2705~W_stat~H_stat~beta_fd[1]~sqrt(avar[1,1])~(beta_fd[1]/sqrt(avar[1,1])));
+
+proc(1) = out_nes(outstr);
+    retp(outstr);
+endp;
+
+end;
